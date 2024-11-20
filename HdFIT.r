@@ -5,6 +5,10 @@ library(glmnet);
 library(randomForest);
 library(deepTL);
 
+#################################################################################
+# Random seed 1000 is used to generate the parameters for data generating model #
+# in each round of Monte Carlo simulation to exactly duplicate reported results #
+#################################################################################
 set.seed(1000);
 sample.size = 500;
 trainsiz = round(sample.size*0.9,0);
@@ -30,6 +34,10 @@ alpha_con[9] = alpha_con[9]*29;
 # alpha_int = (rnorm(conint)-16)/10;
 # alpha_qua = (rnorm(connum)-8)/10;
 
+########################################################################
+# Random seed used for generating synthetic data in each of 1000 round #
+# Monte Carlo simulation is 1000*1, 1000*2, ..., 1000*1000             #
+########################################################################
 set.seed(1000*seeds);
 
 resultfile = "~/HdFIT/result/sim1_seeds.csv";
@@ -134,9 +142,10 @@ for (i in 1:n.sim)  {
 
   xvarcolm = NULL;
   xtrainmat = as.matrix(atrainx[,(datdim-connum):(datdim-1)]);
-  #####################
-  # Feature screening #
-  #####################
+  
+  #################################
+  # Informative Feature screening #
+  #################################
   for (j in 1:(datdim-connum-1))  {
     lmfit = lm(ytrain~atrainx[,j]+xtrainmat);
     xvarcolm = c(xvarcolm,summary(lmfit)$coefficients[2,4]);
@@ -147,12 +156,31 @@ for (i in 1:n.sim)  {
   strainx = selxmat[1:trainsiz,];
   stestx = selxmat[(trainsiz+1):sample.size,];
 
+  ############################
+  # Random Feature Screening #
+  ############################
+  ramindx = sample(1:(datdim-connum-1),80);
+  relxmat = cbind(xvarmat[,ramindx],xvarmat[,(datdim-connum):(datdim-1)]);
+  rtrainx = relxmat[1:trainsiz,];
+  rtestx = relxmat[(trainsiz+1):sample.size,];  
+  
+  ########################################
+  # training data including all features #
+  ########################################
   train_obj = importDnnet(x=as.matrix(atrainx), y=ytrain);
+  #########################################################
+  # training data including screened informative features #
+  #########################################################  
   strain_obj = importDnnet(x=as.matrix(strainx), y=ytrain);
+  ######################################################
+  # training data including randomly screened features #
+  ######################################################    
+  rtrain_obj = importDnnet(x=as.matrix(rtrainx), y=ytrain);    
+
   nshuffle = sample(trainsiz);
   
   ###############################################################  
-  # LASSO fitting 
+  # LASSO fitting based on all features (LASSO)
   ###############################################################
   cv.out = cv.glmnet(as.matrix(atrainx),ytrain,alpha=1,family='gaussian',nfolds=10,type.measure='mse');
   lyhattrain = predict(cv.out,newx=as.matrix(atrainx),s=cv.out$lambda.1se);
@@ -163,7 +191,7 @@ for (i in 1:n.sim)  {
   lpcctest = cor(ytest,lyhattest);
   
   ###############################################################  
-  # S-LASSO fitting 
+  # LASSO fitting based on screened features (SLASSO)
   ###############################################################
   scv.out = cv.glmnet(as.matrix(strainx),ytrain,alpha=1,family='gaussian',nfolds=10,type.measure='mse');
   slyhattrain = predict(scv.out,newx=as.matrix(strainx),s=scv.out$lambda.1se);
@@ -174,7 +202,7 @@ for (i in 1:n.sim)  {
   slpcctest = cor(ytest,slyhattest);
   
   ###############################################################  
-  # RF
+  # Random Forest based on all features (RF)
   ###############################################################
   rlmfit = randomForest(as.matrix(atrainx),ytrain,ntree=1000,nodesize=5);
   ryhattrain = predict(rlmfit,as.matrix(atrainx));
@@ -185,7 +213,7 @@ for (i in 1:n.sim)  {
   rpcctest = cor(ytest,ryhattest);
   
   ###############################################################  
-  # PermFIT-RF
+  # PermFIT for RF based on all features (PermFIT-RF)
   ###############################################################
   permfit_rf = permfit(train=train_obj, k_fold=10, n_perm=100, pathway_list=NULL, method="random_forest", shuffle=nshuffle, n.ensemble=100, ntree=1000, nodesize=5, verbose=0);
   rf_feature = which(permfit_rf@importance$importance_pval <= pvacut);
@@ -198,9 +226,9 @@ for (i in 1:n.sim)  {
   prmsetest = mean((ytest-pryhattest)**2);
   prpcctest = cor(ytest,pryhattest);
   
-  ###############################################################  
-  # HdFIT-RF
-  ###############################################################
+  ##################################################################  
+  # HdFIT for RF based on screened informative features (HdFIT-RF) #
+  ##################################################################
   hdfit_rf = permfit(train=strain_obj, k_fold=10, n_perm=100, pathway_list=NULL, method="random_forest", shuffle=nshuffle, n.ensemble=100, ntree=1000, nodesize=5, verbose=0);
   srf_feature = which(hdfit_rf@importance$importance_pval <= pvacut);
   sprfimpx = length(intersect(truimp,scrindx[srf_feature]));
@@ -213,7 +241,7 @@ for (i in 1:n.sim)  {
   sprpcctest = cor(ytest,spryhattest);  
   
   ###############################################################  
-  # DNN
+  # DNN based on all features (DNN)
   ###############################################################  
   dlmfit = ensemble_dnnet(train_obj,100,esCtrl=esCtrl);  
   dyhattrain = predict(dlmfit,as.matrix(atrainx));
@@ -224,7 +252,7 @@ for (i in 1:n.sim)  {
   dpcctest = cor(ytest,dyhattest);
 
   ###############################################################  
-  # PermFIT-DNN
+  # PermFIT for DNN based on all features (PermFIT-DNN)
   ###############################################################
   permfit_dnn = permfit(train=train_obj, k_fold=10, n_perm=100, pathway_list=NULL, method="ensemble_dnnet", shuffle=nshuffle, n.ensemble=100, esCtrl=esCtrl, verbose=0);
   dnn_feature = which(permfit_dnn@importance$importance_pval <= pvacut);
@@ -237,9 +265,9 @@ for (i in 1:n.sim)  {
   pdmsetest = mean((ytest-pdyhattest)**2);
   pdpcctest = cor(ytest,pdyhattest);
 
-  ###############################################################  
-  # HdFIT-DNN
-  ###############################################################
+  ####################################################################  
+  # HdFIT for DNN based on screened informative features (HdFIT-DNN) #
+  ####################################################################
   hdfit_dnn = permfit(train=strain_obj, k_fold=10, n_perm=100, pathway_list=NULL, method="ensemble_dnnet", shuffle=nshuffle, n.ensemble=100, esCtrl=esCtrl, verbose=0);
   sdnn_feature = which(hdfit_dnn@importance$importance_pval <= pvacut);
   spdnnimpx = length(intersect(truimp,scrindx[sdnn_feature]));
@@ -251,10 +279,51 @@ for (i in 1:n.sim)  {
   spdmsetest = mean((ytest-spdyhattest)**2);
   spdpcctest = cor(ytest,spdyhattest);
   
-  predictions = c(selimpx, prfimpx, sprfimpx, pdnnimpx, spdnnimpx, lmsetrain, lpcctrain, slmsetrain, slpcctrain, rmsetrain, rpcctrain, prmsetrain, prpcctrain, sprmsetrain, sprpcctrain, dmsetrain, dpcctrain, pdmsetrain, pdpcctrain, spdmsetrain, spdpcctrain);
-  predictions = c(predictions, lmsetest, lpcctest, slmsetest, slpcctest, rmsetest, rpcctest, prmsetest, prpcctest, sprmsetest, sprpcctest, dmsetest, dpcctest, pdmsetest, pdpcctest, spdmsetest, spdpcctest);
+  #################################################################  
+  # HdFIT for RF based on randomly screened features (Control-RF) #
+  #################################################################
+  rpermfit_rf = permfit(train=rtrain_obj, k_fold=10, n_perm=100, pathway_list=NULL, method="random_forest", shuffle=nshuffle, n.ensemble=100, ntree=1000, nodesize=5, verbose=0);
+  rrf_feature = which(rpermfit_rf@importance$importance_pval <= pvacut);
+  rprfimpx = length(intersect(truimp,ramindx[rrf_feature]));
+  rprffit = randomForest(as.matrix(rtrainx[,rrf_feature]),ytrain,ntree=1000,nodesize=5);
+  rpryhattrain = predict(rprffit,as.matrix(rtrainx[,rrf_feature]));
+  rprmsetrain = mean((ytrain-rpryhattrain)**2);
+  rprpcctrain = cor(ytrain,rpryhattrain);
+  rpryhattest = predict(rprffit,as.matrix(rtestx[,rrf_feature]));
+  rprmsetest = mean((ytest-rpryhattest)**2);
+  rprpcctest = cor(ytest,rpryhattest);    
+  
+  ###################################################################  
+  # HdFIT for DNN based on randomly screened features (Control-DNN) #
+  ###################################################################
+  rpermfit_dnn = permfit(train=rtrain_obj, k_fold=10, n_perm=100, pathway_list=NULL, method="ensemble_dnnet", shuffle=nshuffle, n.ensemble=100, esCtrl=esCtrl, verbose=0);
+  rdnn_feature = which(rpermfit_dnn@importance$importance_pval <= pvacut);
+  rpdnnimpx = length(intersect(truimp,ramindx[rdnn_feature]));
+  rpdnnfit = ensemble_dnnet(importDnnet(x=as.matrix(rtrainx[,rdnn_feature]),y=ytrain),100,esCtrl=esCtrl);
+  rpdyhattrain = predict(rpdnnfit,as.matrix(rtrainx[,rdnn_feature]));
+  rpdmsetrain = mean((ytrain-rpdyhattrain)**2);
+  rpdpcctrain = cor(ytrain,rpdyhattrain);
+  rpdyhattest = predict(rpdnnfit,as.matrix(rtestx[,rdnn_feature]));
+  rpdmsetest = mean((ytest-rpdyhattest)**2);
+  rpdpcctest = cor(ytest,rpdyhattest);
+  
+  ###############################################################  
+  # Traditional DNN (tDNN)
+  ###############################################################
+  tdat_spl = splitDnnet(train_obj, 0.8);
+  tdnnfit = do.call("dnnet",c(list("train"=tdat_spl$train,"validate"=tdat_spl$valid),esCtrl));  
+  tdyhattrain = predict(tdnnfit,as.matrix(atrainx));
+  tdmsetrain = mean((ytrain-tdyhattrain)**2);
+  tdpcctrain = cor(ytrain,tdyhattrain);
+  tdyhattest = predict(tdnnfit,as.matrix(atestx));
+  tdmsetest = mean((ytest-tdyhattest)**2);
+  tdpcctest = cor(ytest,tdyhattest);  
+  
+  predictions = c(selimpx, prfimpx, sprfimpx, pdnnimpx, spdnnimpx, lmsetrain, lpcctrain, slmsetrain, slpcctrain, rmsetrain, rpcctrain, prmsetrain, prpcctrain, sprmsetrain, sprpcctrain, dmsetrain, dpcctrain, pdmsetrain, pdpcctrain, spdmsetrain, spdpcctrain, rprmsetrain, rprpcctrain, rpdmsetrain, rpdpcctrain, tdmsetrain, tdpcctrain);
+  predictions = c(predictions, lmsetest, lpcctest, slmsetest, slpcctest, rmsetest, rpcctest, prmsetest, prpcctest, sprmsetest, sprpcctest, dmsetest, dpcctest, pdmsetest, pdpcctest, spdmsetest, spdpcctest, rprmsetest, rprpcctest, rpdmsetest, rpdpcctest, tdmsetest, tdpcctest);
   predictions = rbind(predictions);
   
   if (i < 2)  write.table(predictions,file=resultfile,append=F,row.names=F,col.names=F,sep=",");  
   if (i > 1)  write.table(predictions,file=resultfile,append=T,row.names=F,col.names=F,sep=",");
 }
+
